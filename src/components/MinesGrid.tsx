@@ -5,28 +5,33 @@ interface MinesGridProps {
   grid: ('hidden' | 'star' | 'mine' | 'suggested')[];
   onCellClick: (index: number) => void;
   suggestedCells: number[];
+  confidenceMap: Map<number, number>;
   isScanning: boolean;
+  scanIndex: number;
 }
 
-const MinesGrid = ({ grid, onCellClick, suggestedCells, isScanning }: MinesGridProps) => {
+const MinesGrid = ({ grid, onCellClick, suggestedCells, confidenceMap, isScanning, scanIndex }: MinesGridProps) => {
   return (
     <div className="grid grid-cols-5 gap-2 p-4 bg-gradient-to-br from-slate-900 to-slate-800 rounded-2xl border border-purple-500/30 shadow-[0_0_30px_rgba(139,92,246,0.3)]">
       {grid.map((cell, index) => {
         const isSuggested = suggestedCells.includes(index);
+        const confidence = confidenceMap.get(index) || 0;
+        const isBeingScanned = isScanning && index <= scanIndex;
         
         return (
           <motion.button
             key={index}
             onClick={() => onCellClick(index)}
             className={`
-              relative aspect-square rounded-lg font-bold text-lg transition-all duration-300
+              relative aspect-square rounded-lg font-bold text-lg transition-all duration-300 font-mono
               ${cell === 'hidden' 
                 ? 'bg-gradient-to-br from-blue-600 to-blue-700 hover:from-blue-500 hover:to-blue-600 shadow-lg hover:shadow-blue-500/50' 
                 : cell === 'star' 
                   ? 'bg-gradient-to-br from-yellow-500 to-amber-600 shadow-[0_0_20px_rgba(245,158,11,0.5)]' 
                   : 'bg-gradient-to-br from-red-600 to-red-700 shadow-[0_0_20px_rgba(239,68,68,0.5)]'
               }
-              ${isSuggested && cell === 'hidden' ? 'ring-2 ring-green-400 ring-offset-2 ring-offset-slate-900 animate-pulse' : ''}
+              ${isSuggested && cell === 'hidden' ? 'ring-2 ring-green-400 ring-offset-2 ring-offset-slate-900' : ''}
+              ${isBeingScanned && cell === 'hidden' ? 'animate-pulse ring-1 ring-cyan-400' : ''}
             `}
             whileHover={{ scale: cell === 'hidden' ? 1.05 : 1 }}
             whileTap={{ scale: cell === 'hidden' ? 0.95 : 1 }}
@@ -34,17 +39,22 @@ const MinesGrid = ({ grid, onCellClick, suggestedCells, isScanning }: MinesGridP
             animate={{ 
               opacity: 1, 
               scale: 1,
-              boxShadow: isScanning ? [
-                '0 0 5px rgba(139,92,246,0.3)',
-                '0 0 20px rgba(139,92,246,0.6)',
-                '0 0 5px rgba(139,92,246,0.3)'
-              ] : undefined
+              boxShadow: isBeingScanned ? '0 0 15px rgba(34,211,238,0.6)' : undefined
             }}
             transition={{ 
-              delay: index * 0.02,
-              boxShadow: { duration: 0.5, repeat: isScanning ? Infinity : 0 }
+              delay: index * 0.02
             }}
           >
+            {/* Scan effect overlay */}
+            {isBeingScanned && cell === 'hidden' && (
+              <motion.div
+                initial={{ opacity: 0 }}
+                animate={{ opacity: [0.3, 0.6, 0.3] }}
+                transition={{ duration: 0.5, repeat: Infinity }}
+                className="absolute inset-0 bg-gradient-to-r from-cyan-500/30 to-purple-500/30 rounded-lg"
+              />
+            )}
+
             {cell === 'star' && (
               <motion.div
                 initial={{ scale: 0, rotate: -180 }}
@@ -54,6 +64,7 @@ const MinesGrid = ({ grid, onCellClick, suggestedCells, isScanning }: MinesGridP
                 <Star className="w-8 h-8 text-yellow-200 fill-yellow-300 drop-shadow-lg" />
               </motion.div>
             )}
+            
             {cell === 'mine' && (
               <motion.div
                 initial={{ scale: 0 }}
@@ -63,14 +74,25 @@ const MinesGrid = ({ grid, onCellClick, suggestedCells, isScanning }: MinesGridP
                 <Bomb className="w-8 h-8 text-red-200" />
               </motion.div>
             )}
-            {isSuggested && cell === 'hidden' && (
+            
+            {isSuggested && cell === 'hidden' && !isScanning && (
               <motion.div
-                initial={{ opacity: 0 }}
-                animate={{ opacity: 1 }}
-                className="absolute inset-0 flex items-center justify-center"
+                initial={{ opacity: 0, scale: 0 }}
+                animate={{ opacity: 1, scale: 1 }}
+                className="absolute inset-0 flex flex-col items-center justify-center"
               >
-                <span className="text-green-300 text-2xl font-bold">✓</span>
+                <span className="text-green-300 text-lg font-bold">✓</span>
+                <span className="text-[8px] text-green-400/80">
+                  {(confidence * 100).toFixed(0)}%
+                </span>
               </motion.div>
+            )}
+
+            {/* Cell coordinate label */}
+            {cell === 'hidden' && !isSuggested && !isBeingScanned && (
+              <span className="absolute bottom-0.5 right-1 text-[8px] text-blue-300/40 font-mono">
+                {Math.floor(index / 5)},{index % 5}
+              </span>
             )}
           </motion.button>
         );
