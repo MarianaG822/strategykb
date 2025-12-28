@@ -13,6 +13,7 @@ import {
   runAdaptiveMonteCarloSimulation, 
   calculateBaseProbability, 
   calculateEntropy,
+  calculateBayesianProbability,
   type AnalysisStep 
 } from "@/lib/probabilityEngine";
 import { toast } from "sonner";
@@ -23,159 +24,13 @@ const Index = () => {
   const [mines, setMines] = useState(3);
   const [stars, setStars] = useState(5);
   const [grid, setGrid] = useState<CellState[]>(Array(25).fill('hidden'));
+  const [minePositions, setMinePositions] = useState<number[]>([]);
   const [suggestedCells, setSuggestedCells] = useState<number[]>([]);
   const [confidenceMap, setConfidenceMap] = useState<Map<number, number>>(new Map());
   const [isScanning, setIsScanning] = useState(false);
+  const [scanIndex, setScanIndex] = useState(-1);
   const [scanProgress, setScanProgress] = useState(0);
-  const [scanStage, setScanStage] = useState("");
   const [operationLogs, setOperationLogs] = useState<AnalysisStep[]>([]);
-  const [isMarkingMode, setIsMarkingMode] = useState(false);
-  const [markedMines, setMarkedMines] = useState<number[]>([]);
-
-  const { addEntry, clearHistory, trainingLevel, trainingProgress, history, getRecentPatterns } = useTrainingHistory();
-
-  const handleScan = useCallback(async () => {
-    setIsScanning(true);
-    setScanProgress(0);
-    setSuggestedCells([]);
-    
-    // Pegamos o histórico das últimas bombas para precisão
-    const historyData = getRecentPatterns(5);
-
-    const result = await runAdaptiveMonteCarloSimulation(
-      mines,
-      1000,
-      0.97,
-      historyData,
-      trainingLevel,
-      (progress, step) => {
-        setScanProgress(progress);
-        setScanStage(step.message);
-        if (step.message) {
-          setOperationLogs(prev => [step, ...prev].slice(0, 50));
-        }
-      }
-    );
-
-    // Lógica de Forçar Exibição: Se não achou casas com 97%, ele pega as melhores disponíveis
-    let finalCells = result.safeCells;
-    if (finalCells.length === 0) {
-      const sortedByConfidence = Array.from(result.confidenceMap.entries())
-        .sort((a, b) => b[1] - a[1])
-        .slice(0, stars);
-      finalCells = sortedByConfidence.map(([idx]) => idx);
-    }
-
-    setSuggestedCells(finalCells);
-    setConfidenceMap(result.confidenceMap);
-    setIsScanning(false);
-
-    toast.success("Brecha identificada!", {
-      description: `Padrão de ${mines} minas interceptado com sucesso.`,
-    });
-  }, [mines, stars, getRecentPatterns, trainingLevel]);
-
-  const handleReset = () => {
-    setGrid(Array(25).fill('hidden'));
-    setSuggestedCells([]);
-    setConfidenceMap(new Map());
-    setOperationLogs([]);
-    toast.info("Sistema resetado.");
-  };
-
-  const onConfirmMarks = () => {
-    addEntry(markedMines, mines);
-    setIsMarkingMode(false);
-    setMarkedMines([]);
-    toast.success("Memória de bombas atualizada!", {
-      description: "O robô agora evitará estas posições na próxima rodada."
-    });
-  };
-
-  const baseProbability = calculateBaseProbability(mines);
-  const entropy = calculateEntropy(confidenceMap);
-
-  return (
-    <div className="min-h-screen bg-[#020617] text-slate-100 p-4 md:p-8 font-sans selection:bg-purple-500/30">
-      <div className="max-w-6xl mx-auto space-y-8">
-        
-        <header className="flex flex-col md:flex-row md:items-center justify-between gap-4">
-          <motion.div initial={{ opacity: 0, x: -20 }} animate={{ opacity: 1, x: 0 }}>
-            <h1 className="text-4xl font-black tracking-tighter bg-gradient-to-r from-purple-400 via-blue-400 to-cyan-400 bg-clip-text text-transparent">
-              PREDICTOR PRO <span className="text-xs font-mono border border-purple-500/50 px-2 py-0.5 rounded ml-2">V4.0</span>
-            </h1>
-            <p className="text-slate-500 font-mono text-sm mt-1 flex items-center gap-2">
-              <span className="flex h-2 w-2 rounded-full bg-green-500 animate-pulse" />
-              CONECTADO À PLATAFORMA (8787BET/SPRIBE)
-            </p>
-          </motion.div>
-
-          <div className="flex gap-2">
-            <Button onClick={handleReset} variant="outline" className="border-slate-800 bg-slate-900/50 hover:bg-slate-800">
-              <RotateCcw className="w-4 h-4 mr-2" /> RESET
-            </Button>
-            <Button onClick={handleScan} disabled={isScanning || isMarkingMode} className="bg-gradient-to-r from-purple-600 to-blue-600 hover:from-purple-500 hover:to-blue-500 shadow-lg shadow-purple-500/20 px-8">
-              {isScanning ? <Zap className="w-4 h-4 mr-2 animate-spin" /> : <Search className="w-4 h-4 mr-2" />}
-              BUSCAR OPORTUNIDADE
-            </Button>
-          </div>
-        </header>
-
-        <div className="grid grid-cols-1 lg:grid-cols-3 gap-8">
-          <motion.div initial={{ opacity: 0, y: 20 }} animate={{ opacity: 1, y: 0 }} className="lg:col-span-2 space-y-6">
-            <div className="relative">
-              <MinesGrid 
-                grid={grid} 
-                onCellClick={(i) => {
-                  if (isMarkingMode) {
-                    setMarkedMines(prev => prev.includes(i) ? prev.filter(x => x !== i) : [...prev, i]);
-                  }
-                }}
-                suggestedCells={suggestedCells}
-                confidenceMap={confidenceMap}
-                isScanning={isScanning}
-                scanIndex={-1}
-                isMarkingMode={isMarkingMode}
-                markedMines={markedMines}
-              />
-              {isScanning && <div className="absolute inset-0 bg-black/40 backdrop-blur-sm rounded-2xl flex items-center justify-center">
-                <div className="text-center space-y-4">
-                  <div className="text-purple-400 font-mono text-xl animate-pulse">{scanStage}</div>
-                  <div className="w-64 h-2 bg-slate-800 rounded-full overflow-hidden">
-                    <div className="h-full bg-purple-500 transition-all duration-300" style={{ width: `${scanProgress}%` }} />
-                  </div>
-                </div>
-              </div>}
-            </div>
-
-            <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
-              <ConfigPanel mines={mines} stars={stars} onMinesChange={setMines} onStarsChange={setStars} />
-              <TrainingPanel 
-                trainingLevel={trainingLevel} 
-                trainingProgress={trainingProgress}
-                totalEntries={history.length}
-                isMarkingMode={isMarkingMode}
-                markedMines={markedMines}
-                expectedMines={mines}
-                onToggleMarkingMode={() => setIsMarkingMode(!isMarkingMode)}
-                onConfirmMarks={onConfirmMarks}
-                onClearHistory={clearHistory}
-              />
-            </div>
-          </motion.div>
-
-          <aside className="space-y-6">
-            <StatsPanel baseProbability={baseProbability} entropy={entropy} iterations={1000} threshold={0.97} />
-            <PerformanceDashboard totalGames={history.length} wins={Math.floor(history.length * 0.97)} currentStreak={history.length % 5} />
-            <OperationLog logs={operationLogs} isActive={isScanning} />
-          </aside>
-        </div>
-      </div>
-    </div>
-  );
-};
-
-export default Index;
   const [totalGames, setTotalGames] = useState(0);
   const [wins, setWins] = useState(0);
   const [currentStreak, setCurrentStreak] = useState(0);
