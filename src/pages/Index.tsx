@@ -1,40 +1,31 @@
 import { useState } from "react";
-import { useToast } from "@/hooks/use-toast";
-import { useTrainingHistory } from "@/useTrainingHistory"; // Removido o /hooks/ se estiver na raiz
+// Importações corrigidas para a raiz do projeto (onde os seus ficheiros estão)
+import { useToast } from "@/hooks/use-toast"; 
+import { useTrainingHistory } from "@/useTrainingHistory"; 
 import { 
-  runAdaptiveMonteCarloSimulation, 
-  calculateBaseProbability, 
-  calculateEntropy 
-} from "@/probabilityEngine"; // Importado da raiz de src conforme sua lista
+  runAdaptiveMonteCarloSimulation 
+} from "@/probabilityEngine"; 
 
-// Componentes UI
+// Componentes UI (Certifique-se que estes existem ou use HTML simples se falhar)
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
-import { Badge } from "@/components/ui/badge";
-import { Brain, Target, History, RefreshCw } from "lucide-react";
 
 const Index = () => {
   const { toast } = useToast();
-  const { 
-    addEntry, 
-    getRecentPatterns, 
-    trainingLevel, 
-    totalEntries 
-  } = useTrainingHistory();
+  const { addEntry, getRecentPatterns, trainingLevel } = useTrainingHistory();
 
   const [mines, setMines] = useState(3);
   const [isSimulating, setIsSimulating] = useState(false);
   const [results, setResults] = useState<any>(null);
-  const [lastBombsInput, setLastBombsInput] = useState("");
+  const [lastBombs, setLastBombs] = useState("");
 
-  const handleUpdateAndSimulate = async () => {
+  const handleCalculate = async () => {
     setIsSimulating(true);
     
-    // Processa as últimas bombas antes de simular
-    if (lastBombsInput) {
-      const positions = lastBombsInput
-        .split(',')
+    // 1. Regista as últimas bombas se o utilizador inseriu dados
+    if (lastBombs) {
+      const positions = lastBombs.split(',')
         .map(n => parseInt(n.trim()) - 1)
         .filter(n => !isNaN(n) && n >= 0 && n < 25);
       
@@ -44,29 +35,28 @@ const Index = () => {
     }
 
     try {
+      // 2. Executa a simulação adaptativa com o histórico
       const recentPatterns = getRecentPatterns(5);
-      
-      // Chamada ao motor de probabilidade
       const simulation = await runAdaptiveMonteCarloSimulation(
         mines,
-        1000, // Iterações
-        0.97, // Confiança
+        1000,
+        0.97,
         recentPatterns,
         trainingLevel
       );
 
       setResults(simulation);
-      setLastBombsInput(""); 
+      setLastBombs(""); // Limpa o campo
       
       toast({
-        title: "Análise Adaptativa Concluída",
-        description: `O algoritmo ajustou a precisão com base em ${totalEntries} registos.`,
+        title: "Análise Atualizada",
+        description: "O algoritmo aprendeu com as últimas bombas inseridas.",
       });
     } catch (error) {
       toast({
         variant: "destructive",
         title: "Erro no Motor",
-        description: "Verifique se as funções foram exportadas corretamente.",
+        description: "Verifique se os ficheiros probabilityEngine.ts e useTrainingHistory.ts estão na pasta src.",
       });
     } finally {
       setIsSimulating(false);
@@ -74,59 +64,45 @@ const Index = () => {
   };
 
   return (
-    <div className="min-h-screen bg-black text-white p-6 flex items-center justify-center">
-      <Card className="w-full max-w-md bg-zinc-950 border-zinc-800">
-        <CardHeader className="text-center">
-          <CardTitle className="flex items-center justify-center gap-2 text-emerald-500">
-            <Brain size={28} /> ESTRATÉGIA IA
-          </CardTitle>
-          <div className="flex justify-center gap-2 mt-2">
-            <Badge variant="outline" className="border-emerald-500/50 text-emerald-400">
-              Nível IA: {trainingLevel}
-            </Badge>
-            <Badge variant="outline" className="border-zinc-700">
-              Histórico: {totalEntries}
-            </Badge>
-          </div>
+    <div className="min-h-screen bg-slate-950 text-white p-8 flex items-center justify-center">
+      <Card className="w-full max-w-md bg-slate-900 border-slate-800">
+        <CardHeader>
+          <CardTitle className="text-center text-emerald-500">Mines AI Predictor</CardTitle>
+          <p className="text-center text-xs text-slate-500">Nível de Treino: {trainingLevel}</p>
         </CardHeader>
-        
-        <CardContent className="space-y-6">
+        <CardContent className="space-y-4">
           <div className="space-y-2">
-            <label className="text-xs uppercase tracking-widest text-zinc-500">Últimas Bombas (Ex: 2, 14, 21)</label>
+            <label className="text-sm">Onde foram as últimas bombas? (ex: 1, 5, 20)</label>
             <Input 
-              value={lastBombsInput}
-              onChange={(e) => setLastBombsInput(e.target.value)}
-              placeholder="Digite onde as bombas caíram..."
-              className="bg-zinc-900 border-zinc-800 focus:border-emerald-500"
+              value={lastBombs}
+              onChange={(e) => setLastBombs(e.target.value)}
+              placeholder="Números de 1 a 25 separados por vírgula"
+              className="bg-slate-800 border-slate-700"
             />
           </div>
-
-          <div className="flex items-center gap-4">
-            <div className="flex-1">
-              <label className="text-xs text-zinc-500">MINAS: {mines}</label>
-              <input 
-                type="range" min="1" max="24" value={mines} 
-                onChange={(e) => setMines(Number(e.target.value))}
-                className="w-full accent-emerald-500"
-              />
-            </div>
+          
+          <div className="flex flex-col gap-4">
+            <label className="text-sm">Minas: {mines}</label>
+            <input 
+              type="range" min="1" max="24" value={mines} 
+              onChange={(e) => setMines(Number(e.target.value))}
+              className="w-full h-2 bg-slate-700 rounded-lg appearance-none cursor-pointer"
+            />
             <Button 
-              onClick={handleUpdateAndSimulate} 
+              onClick={handleCalculate} 
               disabled={isSimulating}
-              className="bg-emerald-600 hover:bg-emerald-500 text-white"
+              className="bg-emerald-600 hover:bg-emerald-700"
             >
-              {isSimulating ? <RefreshCw className="animate-spin" /> : "ANALISAR"}
+              {isSimulating ? "A Calcular..." : "Calcular Próxima Rodada"}
             </Button>
           </div>
 
           {results && (
-            <div className="p-4 bg-emerald-500/5 rounded-lg border border-emerald-500/20">
-              <div className="text-emerald-400 font-bold flex items-center gap-2 mb-3">
-                <Target size={18} /> PRÓXIMAS JOGADAS:
-              </div>
+            <div className="mt-4 p-4 bg-emerald-500/10 border border-emerald-500/20 rounded-lg">
+              <p className="text-emerald-400 font-bold mb-2 text-sm text-center">SUGESTÕES DE ENTRADA:</p>
               <div className="grid grid-cols-4 gap-2">
                 {results.safeCells.slice(0, 4).map((cell: number) => (
-                  <div key={cell} className="bg-zinc-900 p-2 text-center rounded border border-emerald-500/30 text-emerald-400 font-mono">
+                  <div key={cell} className="bg-slate-800 p-2 text-center rounded border border-emerald-500/40 text-emerald-400 font-mono">
                     {cell + 1}
                   </div>
                 ))}
@@ -140,3 +116,4 @@ const Index = () => {
 };
 
 export default Index;
+          
