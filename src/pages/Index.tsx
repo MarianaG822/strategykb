@@ -7,13 +7,16 @@ import ConfigPanel from "@/components/ConfigPanel";
 import PerformanceDashboard from "@/components/PerformanceDashboard";
 import OperationLog from "@/components/OperationLog";
 import StatsPanel from "@/components/StatsPanel";
+import TrainingPanel from "@/components/TrainingPanel";
+import { useTrainingHistory } from "@/hooks/useTrainingHistory";
 import { 
-  runMonteCarloSimulation, 
+  runAdaptiveMonteCarloSimulation, 
   calculateBaseProbability, 
   calculateEntropy,
   calculateBayesianProbability,
   type AnalysisStep 
 } from "@/lib/probabilityEngine";
+import { toast } from "sonner";
 
 type CellState = 'hidden' | 'star' | 'mine';
 
@@ -33,6 +36,20 @@ const Index = () => {
   const [currentStreak, setCurrentStreak] = useState(0);
   const [gameActive, setGameActive] = useState(false);
   const [entropy, setEntropy] = useState(0);
+  
+  // Training mode states
+  const [isMarkingMode, setIsMarkingMode] = useState(false);
+  const [markedMines, setMarkedMines] = useState<number[]>([]);
+  
+  // Training history hook
+  const { 
+    addEntry, 
+    clearHistory, 
+    getRecentPatterns, 
+    trainingLevel, 
+    trainingProgress, 
+    totalEntries 
+  } = useTrainingHistory();
 
   const generateMinePositions = useCallback((mineCount: number) => {
     const positions: number[] = [];
@@ -53,6 +70,8 @@ const Index = () => {
     setConfidenceMap(new Map());
     setGameActive(true);
     setOperationLogs([]);
+    setIsMarkingMode(false);
+    setMarkedMines([]);
     return newMinePositions;
   }, [mines, generateMinePositions]);
 
@@ -75,15 +94,21 @@ const Index = () => {
     setIsScanning(true);
     setScanProgress(0);
     setOperationLogs([]);
+    setIsMarkingMode(false);
+
+    // Get recent patterns from training history
+    const recentPatterns = getRecentPatterns(3);
 
     // Start scan animation
     const scanPromise = runScanAnimation();
 
-    // Run Monte Carlo simulation
-    const result = await runMonteCarloSimulation(
+    // Run Adaptive Monte Carlo simulation with training data
+    const result = await runAdaptiveMonteCarloSimulation(
       mines,
       1000,
       0.97,
+      recentPatterns,
+      trainingLevel,
       (progress, step) => {
         setScanProgress(progress);
         setOperationLogs(prev => [...prev, step]);
@@ -92,8 +117,24 @@ const Index = () => {
 
     await scanPromise;
 
+    // Log adaptive info
+    if (result.adaptiveInfo.patternsAvoided > 0) {
+      setOperationLogs(prev => [...prev, {
+        timestamp: new Date(),
+        message: `[ADAPT] ${result.adaptiveInfo.patternsAvoided} padrões repetitivos evitados`,
+        type: 'info'
+      }]);
+    }
+
+    if (result.adaptiveInfo.trainingBonus > 0) {
+      setOperationLogs(prev => [...prev, {
+        timestamp: new Date(),
+        message: `[BONUS] +${result.adaptiveInfo.trainingBonus.toFixed(1)}% precisão aplicada`,
+        type: 'success'
+      }]);
+    }
+
     // Filter suggested cells to only include cells that are actually safe
-    // (based on the real mine positions for this game)
     const trueSafeCells = result.safeCells.filter(
       cell => !currentMinePositions.includes(cell) && grid[cell] === 'hidden'
     );
@@ -113,6 +154,19 @@ const Index = () => {
   };
 
   const handleCellClick = (index: number) => {
+    // If in marking mode, handle mine marking
+    if (isMarkingMode) {
+      setMarkedMines(prev => {
+        if (prev.includes(index)) {
+          return prev.filter(i => i !== index);
+        } else if (prev.length < mines) {
+          return [...prev, index];
+        }
+        return prev;
+      });
+      return;
+    }
+
     if (!gameActive || grid[index] !== 'hidden' || isScanning) return;
 
     const newGrid = [...grid];
@@ -165,6 +219,45 @@ const Index = () => {
     }
   };
 
+  const handleToggleMarkingMode = () => {
+    if (isMarkingMode) {
+      setIsMarkingMode(false);
+      setMarkedMines([]);
+    } else {
+      setIsMarkingMode(true);
+      setMarkedMines([]);
+    }
+  };
+
+  const handleConfirmMarks = () => {
+    if (markedMines.length === mines) {
+      addEntry(markedMines, mines);
+      
+      setOperationLogs(prev => [...prev, {
+        timestamp: new Date(),
+        message: `[TRAIN] Padrão salvo! ${markedMines.length} posições registradas.`,
+        type: 'success'
+      }]);
+      
+      toast.success("Padrão de treinamento salvo!", {
+        description: `${totalEntries + 1} padrões no banco de dados`
+      });
+      
+      setIsMarkingMode(false);
+      setMarkedMines([]);
+    }
+  };
+
+  const handleClearHistory = () => {
+    clearHistory();
+    setOperationLogs(prev => [...prev, {
+      timestamp: new Date(),
+      message: '[CLEAR] Histórico de treinamento limpo.',
+      type: 'warning'
+    }]);
+    toast.info("Histórico de treinamento limpo");
+  };
+
   const resetGame = () => {
     setGrid(Array(25).fill('hidden'));
     setMinePositions([]);
@@ -173,6 +266,8 @@ const Index = () => {
     setGameActive(false);
     setOperationLogs([]);
     setScanIndex(-1);
+    setIsMarkingMode(false);
+    setMarkedMines([]);
   };
 
   const baseProbability = calculateBaseProbability(mines);
@@ -198,28 +293,30 @@ const Index = () => {
         >
           <div className="flex items-center justify-center gap-2 text-cyan-400 text-xs tracking-[0.3em] uppercase">
             <Shield className="w-4 h-4" />
-            <span>Sistema de Análise Probabilística</span>
+            <span>Sistema de Análise Probabilística Adaptativa</span>
             <Shield className="w-4 h-4" />
           </div>
           <h1 className="text-2xl md:text-3xl font-bold bg-gradient-to-r from-cyan-400 via-purple-400 to-green-400 bg-clip-text text-transparent flex items-center justify-center gap-3">
             <Sparkles className="w-6 h-6 text-cyan-400" />
-            STRATEGY_SIMULATOR v2.0
+            STRATEGY_SIMULATOR v3.0
             <Sparkles className="w-6 h-6 text-purple-400" />
           </h1>
-          <div className="flex items-center justify-center gap-4 text-[10px] text-slate-500">
+          <div className="flex items-center justify-center gap-4 text-[10px] text-slate-500 flex-wrap">
             <span className="flex items-center gap-1">
               <Zap className="w-3 h-3 text-green-500" />
-              BAYESIAN_ENGINE: ACTIVE
+              ADAPTIVE_ENGINE: ACTIVE
             </span>
             <span>|</span>
             <span>MONTE_CARLO: 1000 ITER</span>
             <span>|</span>
-            <span>CONFIDENCE: 97%</span>
+            <span>TRAINING_LVL: {trainingLevel}</span>
+            <span>|</span>
+            <span className="text-cyan-400">PATTERNS: {totalEntries}</span>
           </div>
         </motion.div>
 
         <div className="grid lg:grid-cols-4 gap-4">
-          {/* Left Panel - Config */}
+          {/* Left Panel - Config & Training */}
           <motion.div
             initial={{ opacity: 0, x: -20 }}
             animate={{ opacity: 1, x: 0 }}
@@ -233,18 +330,23 @@ const Index = () => {
               onStarsChange={setStars}
             />
 
-            <StatsPanel
-              baseProbability={baseProbability}
-              entropy={entropy}
-              iterations={1000}
-              threshold={0.97}
+            <TrainingPanel
+              trainingLevel={trainingLevel}
+              trainingProgress={trainingProgress}
+              totalEntries={totalEntries}
+              isMarkingMode={isMarkingMode}
+              markedMines={markedMines}
+              expectedMines={mines}
+              onToggleMarkingMode={handleToggleMarkingMode}
+              onConfirmMarks={handleConfirmMarks}
+              onClearHistory={handleClearHistory}
             />
 
             <div className="flex flex-col gap-2">
               <Button
                 onClick={analyzePattern}
-                disabled={isScanning}
-                className="w-full bg-gradient-to-r from-cyan-600 to-purple-600 hover:from-cyan-500 hover:to-purple-500 text-white font-bold py-5 rounded-xl shadow-[0_0_20px_rgba(34,211,238,0.4)] hover:shadow-[0_0_30px_rgba(34,211,238,0.6)] transition-all font-mono text-sm tracking-wider"
+                disabled={isScanning || isMarkingMode}
+                className="w-full bg-gradient-to-r from-cyan-600 to-purple-600 hover:from-cyan-500 hover:to-purple-500 text-white font-bold py-5 rounded-xl shadow-[0_0_20px_rgba(34,211,238,0.4)] hover:shadow-[0_0_30px_rgba(34,211,238,0.6)] transition-all font-mono text-sm tracking-wider disabled:opacity-50"
               >
                 {isScanning ? (
                   <>
@@ -262,6 +364,7 @@ const Index = () => {
               <Button
                 onClick={resetGame}
                 variant="outline"
+                disabled={isMarkingMode}
                 className="w-full border-slate-600 text-slate-300 hover:bg-slate-800 hover:text-white font-mono text-xs tracking-wider"
               >
                 <RotateCcw className="w-3 h-3 mr-2" />
@@ -277,6 +380,22 @@ const Index = () => {
             transition={{ delay: 0.2 }}
             className="lg:col-span-2 space-y-3"
           >
+            {/* Marking mode indicator */}
+            <AnimatePresence>
+              {isMarkingMode && (
+                <motion.div
+                  initial={{ opacity: 0, y: -10 }}
+                  animate={{ opacity: 1, y: 0 }}
+                  exit={{ opacity: 0, y: -10 }}
+                  className="p-2 bg-yellow-900/50 rounded-lg border border-yellow-500/50 text-center"
+                >
+                  <p className="text-xs text-yellow-400 font-mono">
+                    🎯 MODO DE MARCAÇÃO ATIVO - Clique onde as bombas estavam
+                  </p>
+                </motion.div>
+              )}
+            </AnimatePresence>
+
             <MinesGrid
               grid={grid}
               onCellClick={handleCellClick}
@@ -284,10 +403,12 @@ const Index = () => {
               confidenceMap={confidenceMap}
               isScanning={isScanning}
               scanIndex={scanIndex}
+              isMarkingMode={isMarkingMode}
+              markedMines={markedMines}
             />
 
             <AnimatePresence>
-              {suggestedCells.length > 0 && !isScanning && (
+              {suggestedCells.length > 0 && !isScanning && !isMarkingMode && (
                 <motion.div
                   initial={{ opacity: 0, y: 10 }}
                   animate={{ opacity: 1, y: 0 }}
@@ -304,6 +425,13 @@ const Index = () => {
               )}
             </AnimatePresence>
 
+            <StatsPanel
+              baseProbability={baseProbability}
+              entropy={entropy}
+              iterations={1000}
+              threshold={0.97}
+            />
+
             <PerformanceDashboard
               totalGames={totalGames}
               wins={wins}
@@ -316,7 +444,7 @@ const Index = () => {
             initial={{ opacity: 0, x: 20 }}
             animate={{ opacity: 1, x: 0 }}
             transition={{ delay: 0.3 }}
-            className="h-[400px] lg:h-auto"
+            className="h-[500px] lg:h-auto"
           >
             <OperationLog logs={operationLogs} isActive={isScanning} />
           </motion.div>
@@ -330,8 +458,8 @@ const Index = () => {
           className="text-center p-3 bg-slate-900/30 rounded-lg border border-slate-700/30"
         >
           <p className="text-[10px] text-slate-500 font-mono">
-            <span className="text-cyan-500">[DISCLAIMER]</span> Simulador educacional de probabilidade. 
-            Resultados gerados por RNG local para demonstração de conceitos estatísticos Bayesianos.
+            <span className="text-cyan-500">[DISCLAIMER]</span> Simulador educacional de probabilidade com aprendizado adaptativo. 
+            Dados persistidos localmente via localStorage.
           </p>
         </motion.div>
       </div>
