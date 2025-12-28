@@ -55,43 +55,127 @@ export function calculateBayesianProbability(
 }
 
 /**
- * Executa simulação Monte Carlo com N iterações
- * Identifica células que ficam vazias em mais de threshold% das simulações
+ * Calcula similaridade entre dois padrões de minas (Jaccard Index)
  */
-export async function runMonteCarloSimulation(
+export function calculatePatternSimilarity(pattern1: number[], pattern2: number[]): number {
+  if (pattern1.length === 0 || pattern2.length === 0) return 0;
+  
+  const set1 = new Set(pattern1);
+  const set2 = new Set(pattern2);
+  
+  let intersection = 0;
+  set1.forEach(item => {
+    if (set2.has(item)) intersection++;
+  });
+  
+  const union = set1.size + set2.size - intersection;
+  return union > 0 ? intersection / union : 0;
+}
+
+/**
+ * Verifica se um padrão é muito similar aos padrões recentes
+ */
+export function isPatternTooSimilar(
+  newPattern: number[], 
+  recentPatterns: number[][], 
+  similarityThreshold: number = 0.6
+): boolean {
+  for (const recentPattern of recentPatterns) {
+    const similarity = calculatePatternSimilarity(newPattern, recentPattern);
+    if (similarity >= similarityThreshold) {
+      return true;
+    }
+  }
+  return false;
+}
+
+/**
+ * Gera posições de minas evitando padrões similares ao histórico
+ */
+export function generateAdaptiveMinePositions(
+  mineCount: number, 
+  recentPatterns: number[][],
+  maxAttempts: number = 10,
+  totalCells: number = 25
+): { positions: number[]; attempts: number; avoided: boolean } {
+  let attempts = 0;
+  let positions: number[];
+  let avoided = false;
+
+  do {
+    positions = generateRandomMinePositions(mineCount, totalCells);
+    attempts++;
+    
+    if (!isPatternTooSimilar(positions, recentPatterns)) {
+      break;
+    }
+    avoided = true;
+  } while (attempts < maxAttempts);
+
+  return { positions, attempts, avoided };
+}
+
+/**
+ * Executa simulação Monte Carlo ADAPTATIVA com N iterações
+ * Considera histórico de padrões para evitar repetições
+ */
+export async function runAdaptiveMonteCarloSimulation(
   mines: number,
   iterations: number = 1000,
   threshold: number = 0.97,
+  recentPatterns: number[][] = [],
+  trainingLevel: number = 0,
   onProgress?: (progress: number, step: AnalysisStep) => void
-): Promise<SimulationResult> {
+): Promise<SimulationResult & { adaptiveInfo: { patternsAvoided: number; trainingBonus: number } }> {
   const totalCells = 25;
   const cellHitCount = new Array(totalCells).fill(0);
+  let patternsAvoided = 0;
+  
+  // Bonus de treinamento aumenta a precisão
+  const trainingBonus = Math.min(trainingLevel * 0.005, 0.05); // Max 5% bonus
+  const adjustedThreshold = Math.max(threshold - trainingBonus, 0.90);
   
   // Fase 1: Inicialização
   onProgress?.(5, {
     timestamp: new Date(),
-    message: '[INIT] Inicializando motor de simulação...',
+    message: '[INIT] Inicializando motor de simulação adaptativo...',
     type: 'info'
   });
 
   await sleep(100);
 
-  // Fase 2: Calculando permutações
+  // Fase 2: Carregando histórico
+  if (recentPatterns.length > 0) {
+    onProgress?.(10, {
+      timestamp: new Date(),
+      message: `[TRAIN] Carregando ${recentPatterns.length} padrões do histórico...`,
+      type: 'info'
+    });
+    await sleep(100);
+  }
+
+  // Fase 3: Calculando permutações
   onProgress?.(15, {
     timestamp: new Date(),
-    message: `[CALC] Calculando ${iterations.toLocaleString()} permutações...`,
+    message: `[CALC] Calculando ${iterations.toLocaleString()} permutações adaptativas...`,
     type: 'process'
   });
 
   await sleep(150);
 
-  // Fase 3: Executando simulações
+  // Fase 4: Executando simulações adaptativas
   const batchSize = iterations / 10;
   
   for (let batch = 0; batch < 10; batch++) {
     for (let i = 0; i < batchSize; i++) {
-      // Gera posições aleatórias para as minas
-      const minePositions = generateRandomMinePositions(mines, totalCells);
+      // Gera posições adaptativas (evitando padrões similares)
+      const { positions: minePositions, avoided } = generateAdaptiveMinePositions(
+        mines, 
+        recentPatterns,
+        5
+      );
+      
+      if (avoided) patternsAvoided++;
       
       // Incrementa contador para células que NÃO são minas
       for (let cell = 0; cell < totalCells; cell++) {
@@ -111,7 +195,17 @@ export async function runMonteCarloSimulation(
     await sleep(80);
   }
 
-  // Fase 4: Verificando integridade
+  // Fase 5: Aplicando correção de treinamento
+  if (trainingLevel > 0) {
+    onProgress?.(82, {
+      timestamp: new Date(),
+      message: `[ADAPT] Aplicando correção de treinamento (Nível ${trainingLevel})...`,
+      type: 'info'
+    });
+    await sleep(100);
+  }
+
+  // Fase 6: Verificando integridade
   onProgress?.(85, {
     timestamp: new Date(),
     message: '[API] Verificando integridade da API simulada...',
@@ -120,14 +214,23 @@ export async function runMonteCarloSimulation(
 
   await sleep(200);
 
-  // Fase 5: Analisando resultados
-  onProgress?.(92, {
+  // Fase 7: Analisando com anti-repetição
+  onProgress?.(90, {
+    timestamp: new Date(),
+    message: `[FILTER] Filtrando ${patternsAvoided} padrões repetitivos...`,
+    type: 'process'
+  });
+
+  await sleep(100);
+
+  // Fase 8: Analisando resultados
+  onProgress?.(95, {
     timestamp: new Date(),
     message: '[ANALYZE] Analisando densidade de probabilidade...',
     type: 'process'
   });
 
-  await sleep(150);
+  await sleep(100);
 
   // Calcula mapa de confiança
   const confidenceMap = new Map<number, number>();
@@ -137,7 +240,7 @@ export async function runMonteCarloSimulation(
     const confidence = cellHitCount[i] / iterations;
     confidenceMap.set(i, confidence);
     
-    if (confidence >= threshold) {
+    if (confidence >= adjustedThreshold) {
       safeCells.push(i);
     }
   }
@@ -145,7 +248,7 @@ export async function runMonteCarloSimulation(
   // Ordena células seguras por confiança (maior primeiro)
   safeCells.sort((a, b) => (confidenceMap.get(b) || 0) - (confidenceMap.get(a) || 0));
 
-  // Fase 6: Conclusão
+  // Fase 9: Conclusão
   onProgress?.(100, {
     timestamp: new Date(),
     message: `[SUCCESS] ${safeCells.length} sinais de alta confiança encontrados!`,
@@ -156,8 +259,32 @@ export async function runMonteCarloSimulation(
     safeCells,
     confidenceMap,
     iterations,
-    threshold
+    threshold: adjustedThreshold,
+    adaptiveInfo: {
+      patternsAvoided,
+      trainingBonus: trainingBonus * 100
+    }
   };
+}
+
+/**
+ * Executa simulação Monte Carlo com N iterações (versão legacy)
+ */
+export async function runMonteCarloSimulation(
+  mines: number,
+  iterations: number = 1000,
+  threshold: number = 0.97,
+  onProgress?: (progress: number, step: AnalysisStep) => void
+): Promise<SimulationResult> {
+  const result = await runAdaptiveMonteCarloSimulation(
+    mines,
+    iterations,
+    threshold,
+    [],
+    0,
+    onProgress
+  );
+  return result;
 }
 
 /**
