@@ -1,307 +1,115 @@
-import { useState, useCallback } from "react";
-import { motion, AnimatePresence } from "framer-motion";
-import { Button } from "@/components/ui/button";
-import { Search, RotateCcw, Sparkles, Shield, Zap } from "lucide-react";
-import MinesGrid from "@/components/MinesGrid";
-import ConfigPanel from "@/components/ConfigPanel";
-import PerformanceDashboard from "@/components/PerformanceDashboard";
-import OperationLog from "@/components/OperationLog";
-import StatsPanel from "@/components/StatsPanel";
-import TrainingPanel from "@/components/TrainingPanel";
+import { useState, useEffect } from "react";
+import { useToast } from "@/hooks/use-toast";
 import { useTrainingHistory } from "@/hooks/useTrainingHistory";
 import { 
   runAdaptiveMonteCarloSimulation, 
   calculateBaseProbability, 
-  calculateEntropy,
-  calculateBayesianProbability,
-  type AnalysisStep 
-} from "@/lib/probabilityEngine";
-import { toast } from "sonner";
+  calculateEntropy 
+} from "@/utils/probabilityEngine";
 
-type CellState = 'hidden' | 'star' | 'mine';
+// Componentes da UI (Assumindo que existem no seu projeto Lovable)
+import { Card } from "@/components/ui/card";
+import { Button } from "@/components/ui/button";
 
 const Index = () => {
-  const [mines, setMines] = useState(3);
-  const [stars, setStars] = useState(5);
-  const [grid, setGrid] = useState<CellState[]>(Array(25).fill('hidden'));
-  const [minePositions, setMinePositions] = useState<number[]>([]);
-  const [suggestedCells, setSuggestedCells] = useState<number[]>([]);
-  const [confidenceMap, setConfidenceMap] = useState<Map<number, number>>(new Map());
-  const [isScanning, setIsScanning] = useState(false);
-  const [scanIndex, setScanIndex] = useState(-1);
-  const [scanProgress, setScanProgress] = useState(0);
-  const [operationLogs, setOperationLogs] = useState<AnalysisStep[]>([]);
-  const [totalGames, setTotalGames] = useState(0);
-  const [wins, setWins] = useState(0);
-  const [currentStreak, setCurrentStreak] = useState(0);
-  const [gameActive, setGameActive] = useState(false);
-  const [entropy, setEntropy] = useState(0);
-  
-  // Training mode states
-  const [isMarkingMode, setIsMarkingMode] = useState(false);
-  const [markedMines, setMarkedMines] = useState<number[]>([]);
-  
-  // Training history hook
+  const { toast } = useToast();
   const { 
     addEntry, 
-    clearHistory, 
     getRecentPatterns, 
     trainingLevel, 
-    trainingProgress, 
     totalEntries 
   } = useTrainingHistory();
 
-  const generateMinePositions = useCallback((mineCount: number) => {
-    const positions: number[] = [];
-    while (positions.length < mineCount) {
-      const pos = Math.floor(Math.random() * 25);
-      if (!positions.includes(pos)) {
-        positions.push(pos);
-      }
-    }
-    return positions;
-  }, []);
+  const [mines, setMines] = useState(3);
+  const [isSimulating, setIsSimulating] = useState(false);
+  const [results, setResults] = useState<any>(null);
+  const [lastBombPositions, setLastBombPositions] = useState<number[]>([]);
 
-  const startNewGame = useCallback(() => {
-    const newMinePositions = generateMinePositions(mines);
-    setMinePositions(newMinePositions);
-    setGrid(Array(25).fill('hidden'));
-    setSuggestedCells([]);
-    setConfidenceMap(new Map());
-    setGameActive(true);
-    setOperationLogs([]);
-    setIsMarkingMode(false);
-    setMarkedMines([]);
-    return newMinePositions;
-  }, [mines, generateMinePositions]);
-
-  const runScanAnimation = async () => {
-    for (let i = 0; i < 25; i++) {
-      setScanIndex(i);
-      await new Promise(resolve => setTimeout(resolve, 40));
-    }
-    setScanIndex(-1);
+  // Função para processar o final da rodada e aprender com as bombas
+  const handleEndOfRound = (positions: number[]) => {
+    addEntry(positions, mines);
+    setLastBombPositions(positions);
+    toast({
+      title: "Padrão Registrado",
+      description: "O algoritmo aprendeu com as últimas bombas para melhorar a precisão.",
+    });
   };
 
-  const analyzePattern = async () => {
-    let currentMinePositions = minePositions;
-    
-    if (!gameActive) {
-      currentMinePositions = startNewGame();
-      setMinePositions(currentMinePositions);
-    }
+  const executeSimulation = async () => {
+    setIsSimulating(true);
+    try {
+      // Obtém padrões recentes do histórico para a simulação adaptativa
+      const recentPatterns = getRecentPatterns(5);
+      
+      const simulation = await runAdaptiveMonteCarloSimulation(
+        mines,
+        1000,
+        0.97,
+        recentPatterns,
+        trainingLevel
+      );
 
-    setIsScanning(true);
-    setScanProgress(0);
-    setOperationLogs([]);
-    setIsMarkingMode(false);
-
-    // Get recent patterns from training history
-    const recentPatterns = getRecentPatterns(3);
-
-    // Start scan animation
-    const scanPromise = runScanAnimation();
-
-    // Run Adaptive Monte Carlo simulation with training data
-    const result = await runAdaptiveMonteCarloSimulation(
-      mines,
-      1000,
-      0.97,
-      recentPatterns,
-      trainingLevel,
-      (progress, step) => {
-        setScanProgress(progress);
-        setOperationLogs(prev => [...prev, step]);
-      }
-    );
-
-    await scanPromise;
-
-    // Log adaptive info
-    if (result.adaptiveInfo.patternsAvoided > 0) {
-      setOperationLogs(prev => [...prev, {
-        timestamp: new Date(),
-        message: `[ADAPT] ${result.adaptiveInfo.patternsAvoided} padrões repetitivos evitados`,
-        type: 'info'
-      }]);
-    }
-
-    if (result.adaptiveInfo.trainingBonus > 0) {
-      setOperationLogs(prev => [...prev, {
-        timestamp: new Date(),
-        message: `[BONUS] +${result.adaptiveInfo.trainingBonus.toFixed(1)}% precisão aplicada`,
-        type: 'success'
-      }]);
-    }
-
-    // Filter suggested cells to only include cells that are actually safe
-    const trueSafeCells = result.safeCells.filter(
-      cell => !currentMinePositions.includes(cell) && grid[cell] === 'hidden'
-    );
-
-    // Take top suggestions based on stars requested
-    const suggestions = trueSafeCells.slice(0, Math.min(stars, trueSafeCells.length));
-    
-    setSuggestedCells(suggestions);
-    setConfidenceMap(result.confidenceMap);
-    
-    // Calculate entropy
-    const bayesianProbs = calculateBayesianProbability(mines, [], [], 25);
-    setEntropy(calculateEntropy(bayesianProbs));
-
-    setIsScanning(false);
-    setTotalGames(prev => prev + 1);
-  };
-
-  const handleCellClick = (index: number) => {
-    // If in marking mode, handle mine marking
-    if (isMarkingMode) {
-      setMarkedMines(prev => {
-        if (prev.includes(index)) {
-          return prev.filter(i => i !== index);
-        } else if (prev.length < mines) {
-          return [...prev, index];
-        }
-        return prev;
+      setResults(simulation);
+    } catch (error) {
+      toast({
+        variant: "destructive",
+        title: "Erro na simulação",
+        description: "Não foi possível calcular as probabilidades.",
       });
-      return;
-    }
-
-    if (!gameActive || grid[index] !== 'hidden' || isScanning) return;
-
-    const newGrid = [...grid];
-    
-    if (minePositions.includes(index)) {
-      newGrid[index] = 'mine';
-      setGrid(newGrid);
-      setCurrentStreak(0);
-      setGameActive(false);
-      
-      setOperationLogs(prev => [...prev, {
-        timestamp: new Date(),
-        message: '[FAIL] Mina detectada! Sequência interrompida.',
-        type: 'warning'
-      }]);
-
-      // Reveal all mines
-      setTimeout(() => {
-        const revealedGrid = [...newGrid];
-        minePositions.forEach(pos => {
-          revealedGrid[pos] = 'mine';
-        });
-        setGrid(revealedGrid);
-      }, 300);
-    } else {
-      newGrid[index] = 'star';
-      setGrid(newGrid);
-      setWins(prev => prev + 1);
-      setCurrentStreak(prev => prev + 1);
-      
-      setOperationLogs(prev => [...prev, {
-        timestamp: new Date(),
-        message: `[HIT] Estrela encontrada em [${Math.floor(index/5)},${index%5}]!`,
-        type: 'success'
-      }]);
-
-      // Remove from suggestions
-      setSuggestedCells(prev => prev.filter(c => c !== index));
-      
-      // Check if all stars found
-      const starsFound = newGrid.filter(c => c === 'star').length;
-      if (starsFound >= stars) {
-        setGameActive(false);
-        setOperationLogs(prev => [...prev, {
-          timestamp: new Date(),
-          message: '[COMPLETE] Todos os alvos foram encontrados!',
-          type: 'success'
-        }]);
-      }
+    } finally {
+      setIsSimulating(false);
     }
   };
-
-  const handleToggleMarkingMode = () => {
-    if (isMarkingMode) {
-      setIsMarkingMode(false);
-      setMarkedMines([]);
-    } else {
-      setIsMarkingMode(true);
-      setMarkedMines([]);
-    }
-  };
-
-  const handleConfirmMarks = () => {
-    if (markedMines.length === mines) {
-      addEntry(markedMines, mines);
-      
-      setOperationLogs(prev => [...prev, {
-        timestamp: new Date(),
-        message: `[TRAIN] Padrão salvo! ${markedMines.length} posições registradas.`,
-        type: 'success'
-      }]);
-      
-      toast.success("Padrão de treinamento salvo!", {
-        description: `${totalEntries + 1} padrões no banco de dados`
-      });
-      
-      setIsMarkingMode(false);
-      setMarkedMines([]);
-    }
-  };
-
-  const handleClearHistory = () => {
-    clearHistory();
-    setOperationLogs(prev => [...prev, {
-      timestamp: new Date(),
-      message: '[CLEAR] Histórico de treinamento limpo.',
-      type: 'warning'
-    }]);
-    toast.info("Histórico de treinamento limpo");
-  };
-
-  const resetGame = () => {
-    setGrid(Array(25).fill('hidden'));
-    setMinePositions([]);
-    setSuggestedCells([]);
-    setConfidenceMap(new Map());
-    setGameActive(false);
-    setOperationLogs([]);
-    setScanIndex(-1);
-    setIsMarkingMode(false);
-    setMarkedMines([]);
-  };
-
-  const baseProbability = calculateBaseProbability(mines);
 
   return (
-    <div className="min-h-screen bg-gradient-to-br from-slate-950 via-slate-900 to-purple-950 text-white p-4 md:p-6 font-mono">
-      {/* Background effects */}
-      <div className="fixed inset-0 overflow-hidden pointer-events-none">
-        <div className="absolute top-1/4 left-1/4 w-96 h-96 bg-purple-500/10 rounded-full blur-3xl" />
-        <div className="absolute bottom-1/4 right-1/4 w-96 h-96 bg-blue-500/10 rounded-full blur-3xl" />
-        <div className="absolute top-1/2 left-1/2 w-64 h-64 bg-cyan-500/5 rounded-full blur-3xl animate-pulse" />
+    <div className="container mx-auto py-8">
+      <Card className="p-6 bg-card text-card-foreground">
+        <h1 className="text-2xl font-bold mb-4">Analisador Monte Carlo Adaptativo</h1>
         
-        {/* Scan lines effect */}
-        <div className="absolute inset-0 bg-[repeating-linear-gradient(0deg,transparent,transparent_2px,rgba(0,255,255,0.03)_2px,rgba(0,255,255,0.03)_4px)]" />
-      </div>
+        <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+          <section>
+            <h2 className="text-lg font-semibold mb-2">Configurações</h2>
+            <div className="flex flex-col gap-4">
+              <label>Número de Minas: {mines}</label>
+              <input 
+                type="range" 
+                min="1" 
+                max="24" 
+                value={mines} 
+                onChange={(e) => setMines(Number(e.target.value))}
+              />
+              <p className="text-sm text-muted-foreground">
+                Nível de Treinamento: {trainingLevel} ({totalEntries} rodadas)
+              </p>
+              <Button 
+                onClick={executeSimulation} 
+                disabled={isSimulating}
+              >
+                {isSimulating ? "Simulando..." : "Calcular Próxima Rodada"}
+              </Button>
+            </div>
+          </section>
 
-      <div className="relative max-w-6xl mx-auto space-y-4">
-        {/* Header */}
-        <motion.div
-          initial={{ opacity: 0, y: -20 }}
-          animate={{ opacity: 1, y: 0 }}
-          className="text-center space-y-2"
-        >
-          <div className="flex items-center justify-center gap-2 text-cyan-400 text-xs tracking-[0.3em] uppercase">
-            <Shield className="w-4 h-4" />
-            <span>Sistema de Análise Probabilística Adaptativa</span>
-            <Shield className="w-4 h-4" />
-          </div>
-          <h1 className="text-2xl md:text-3xl font-bold bg-gradient-to-r from-cyan-400 via-purple-400 to-green-400 bg-clip-text text-transparent flex items-center justify-center gap-3">
-            <Sparkles className="w-6 h-6 text-cyan-400" />
-            STRATEGY_SIMULATOR v3.0
-            <Sparkles className="w-6 h-6 text-purple-400" />
-          </h1>
-          <div className="flex items-center justify-center gap-4 text-[10px] text-slate-500 flex-wrap">
+          <section>
+            <h2 className="text-lg font-semibold mb-2">Probabilidades</h2>
+            {results ? (
+              <div className="space-y-2">
+                <p>Células Seguras: {results.safeCells.slice(0, 3).join(", ")}</p>
+                <p>Bônus de Precisão: +{results.adaptiveInfo.trainingBonus.toFixed(2)}%</p>
+                <p>Padrões Evitados: {results.adaptiveInfo.patternsAvoided}</p>
+              </div>
+            ) : (
+              <p className="text-muted-foreground">Inicie a simulação para ver os resultados.</p>
+            )}
+          </section>
+        </div>
+      </Card>
+    </div>
+  );
+};
+
+export default Index;
+ems-center justify-center gap-4 text-[10px] text-slate-500 flex-wrap">
             <span className="flex items-center gap-1">
               <Zap className="w-3 h-3 text-green-500" />
               ADAPTIVE_ENGINE: ACTIVE
