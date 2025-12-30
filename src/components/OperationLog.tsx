@@ -1,14 +1,19 @@
 import { motion, AnimatePresence } from "framer-motion";
 import { Terminal, CheckCircle, AlertCircle, Loader2, Info } from "lucide-react";
-import { AnalysisStep } from "@/lib/probabilityEngine";
+
+export interface LogEntry {
+  type: 'info' | 'process' | 'success' | 'warning';
+  message: string;
+  timestamp: Date;
+}
 
 interface OperationLogProps {
-  logs: AnalysisStep[];
+  logs: LogEntry[];
   isActive: boolean;
 }
 
 const OperationLog = ({ logs, isActive }: OperationLogProps) => {
-  const getIcon = (type: AnalysisStep['type']) => {
+  const getIcon = (type: LogEntry['type']) => {
     switch (type) {
       case 'success':
         return <CheckCircle className="w-3 h-3 text-green-400" />;
@@ -21,7 +26,7 @@ const OperationLog = ({ logs, isActive }: OperationLogProps) => {
     }
   };
 
-  const getColor = (type: AnalysisStep['type']) => {
+  const getColor = (type: LogEntry['type']) => {
     switch (type) {
       case 'success':
         return 'text-green-400';
@@ -36,7 +41,6 @@ const OperationLog = ({ logs, isActive }: OperationLogProps) => {
 
   return (
     <div className="h-full flex flex-col bg-black/80 rounded-xl border border-green-500/30 overflow-hidden font-mono">
-      {/* Header */}
       <div className="flex items-center gap-2 px-3 py-2 bg-green-900/30 border-b border-green-500/30">
         <Terminal className="w-4 h-4 text-green-400" />
         <span className="text-xs text-green-400 font-bold tracking-wider">OPERATION_LOG</span>
@@ -48,7 +52,6 @@ const OperationLog = ({ logs, isActive }: OperationLogProps) => {
         )}
       </div>
 
-      {/* Log content */}
       <div className="flex-1 overflow-y-auto p-2 space-y-1 text-[11px] scrollbar-thin scrollbar-thumb-green-500/30">
         <AnimatePresence mode="popLayout">
           {logs.length === 0 ? (
@@ -82,7 +85,6 @@ const OperationLog = ({ logs, isActive }: OperationLogProps) => {
         </AnimatePresence>
       </div>
 
-      {/* Footer stats */}
       <div className="px-3 py-2 bg-slate-900/50 border-t border-green-500/20 text-[10px] text-slate-500">
         <div className="flex justify-between">
           <span>ENTRIES: {logs.length}</span>
