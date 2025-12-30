@@ -8,7 +8,7 @@ import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Badge } from "@/components/ui/badge";
-import { Brain, Target, RefreshCw, Bomb, Star, Zap, TrendingUp, Flame } from "lucide-react";
+import { Brain, Target, RefreshCw, Bomb, Star, Zap, TrendingUp, Flame, Snowflake } from "lucide-react";
 
 const Index = () => {
   const { toast } = useToast();
@@ -83,6 +83,7 @@ const Index = () => {
     for (let i = 0; i < 25; i++) {
       const isSuggested = results.safeCells.includes(i);
       const isHotspot = results.adaptiveInfo.hotspots.includes(i);
+      const isColdspot = results.adaptiveInfo.coldspots?.includes(i) && !isSuggested;
       const confidence = results.confidenceMap.get(i) || 0;
       
       cells.push(
@@ -97,7 +98,9 @@ const Index = () => {
               ? 'bg-gradient-to-br from-emerald-500 to-green-600 text-white ring-2 ring-emerald-300 shadow-[0_0_15px_rgba(16,185,129,0.5)]' 
               : isHotspot
                 ? 'bg-gradient-to-br from-red-900/60 to-red-800/60 text-red-300 ring-1 ring-red-500/50'
-                : 'bg-zinc-800/80 text-zinc-500'
+                : isColdspot
+                  ? 'bg-gradient-to-br from-sky-900/40 to-blue-900/40 text-sky-300 ring-1 ring-sky-500/30'
+                  : 'bg-zinc-800/80 text-zinc-500'
             }
           `}
         >
@@ -109,7 +112,12 @@ const Index = () => {
           ) : isHotspot ? (
             <>
               <Bomb className="w-3 h-3 text-red-400" />
-              <span className="text-[8px] text-red-400">perigoso</span>
+              <span className="text-[8px] text-red-400">evitar</span>
+            </>
+          ) : isColdspot ? (
+            <>
+              <Snowflake className="w-3 h-3 text-sky-400" />
+              <span className="text-[8px] text-sky-400">raro</span>
             </>
           ) : (
             <span className="text-zinc-600 text-[10px]">{i + 1}</span>
@@ -242,7 +250,20 @@ const Index = () => {
                 {results.adaptiveInfo.hotspots.length > 0 && (
                   <div className="flex items-center justify-center gap-2 text-[10px] text-red-400 bg-red-500/10 rounded-lg py-2">
                     <Flame className="w-3 h-3" />
-                    {results.adaptiveInfo.hotspots.length} células marcadas como perigosas pelo histórico
+                    {results.adaptiveInfo.hotspots.length} células perigosas (alta frequência)
+                  </div>
+                )}
+
+                {results.adaptiveInfo.coldspots && results.adaptiveInfo.coldspots.length > 0 && (
+                  <div className="flex items-center justify-center gap-2 text-[10px] text-sky-400 bg-sky-500/10 rounded-lg py-2">
+                    <Snowflake className="w-3 h-3" />
+                    {results.adaptiveInfo.coldspots.length} células raras (baixa frequência)
+                  </div>
+                )}
+
+                {results.adaptiveInfo.localDeviation > 0.1 && (
+                  <div className="text-center text-[10px] text-amber-400/80">
+                    Desvio local: {(results.adaptiveInfo.localDeviation * 100).toFixed(0)}% — distribuição irregular detectada
                   </div>
                 )}
               </motion.div>

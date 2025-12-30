@@ -1,11 +1,5 @@
-// Motor de Probabilidade Adaptativo - Estilo Spribe Mines
-// Usa histórico de bombas para melhorar assertividade
-
-export interface AnalysisStep {
-  type: 'info' | 'process' | 'success' | 'warning';
-  message: string;
-  timestamp: Date;
-}
+// Motor de Probabilidade Adaptativo - Engenharia Reversa Spribe Mines
+// Implementa Fisher-Yates + Desvio Padrão Local para máxima assertividade
 
 export interface ProbabilityResult {
   safeCells: number[];
@@ -16,144 +10,209 @@ export interface ProbabilityResult {
   adaptiveInfo: {
     patternsAvoided: number;
     trainingBonus: number;
-    hotspots: number[]; // Células com alta frequência de bombas
+    hotspots: number[];
+    coldspots: number[]; // Células que raramente têm bombas
+    localDeviation: number; // Desvio padrão local
   };
 }
 
 /**
- * Cria um mapa de calor baseado no histórico de bombas
- * Células que aparecem mais vezes no histórico = mais perigosas
+ * Simula o algoritmo Fisher-Yates do Spribe
+ * Gera posições de minas como o cassino faz
  */
-function buildHeatmap(recentPatterns: number[][]): Map<number, number> {
-  const heatmap = new Map<number, number>();
+function fisherYatesMineGeneration(numberOfMines: number): number[] {
+  const positions = Array.from({ length: 25 }, (_, i) => i);
+  const mines: number[] = [];
   
-  // Inicializa todas as células com 0
-  for (let i = 0; i < 25; i++) {
-    heatmap.set(i, 0);
+  for (let i = 0; i < numberOfMines; i++) {
+    // Simula o random do hash (0 a 1)
+    const randomFloat = Math.random();
+    const index = Math.floor(randomFloat * positions.length);
+    mines.push(positions.splice(index, 1)[0]);
   }
   
-  // Conta frequência de bombas em cada célula
-  for (const pattern of recentPatterns) {
-    for (const cell of pattern) {
-      heatmap.set(cell, (heatmap.get(cell) || 0) + 1);
-    }
-  }
-  
-  return heatmap;
+  return mines;
 }
 
 /**
- * Calcula similaridade entre dois padrões usando Jaccard Index
+ * Calcula frequência de cada célula no histórico
+ * Retorna mapa normalizado de 0 a 1
  */
-function calculatePatternSimilarity(pattern1: number[], pattern2: number[]): number {
-  if (pattern1.length === 0 || pattern2.length === 0) return 0;
-  const set1 = new Set(pattern1);
-  const set2 = new Set(pattern2);
-  const intersection = [...set1].filter(x => set2.has(x)).length;
-  const union = new Set([...set1, ...set2]).size;
+function buildFrequencyMap(recentPatterns: number[][]): Map<number, number> {
+  const freq = new Map<number, number>();
+  
+  for (let i = 0; i < 25; i++) {
+    freq.set(i, 0);
+  }
+  
+  if (recentPatterns.length === 0) return freq;
+  
+  // Conta ocorrências
+  for (const pattern of recentPatterns) {
+    for (const cell of pattern) {
+      freq.set(cell, (freq.get(cell) || 0) + 1);
+    }
+  }
+  
+  // Normaliza para 0-1
+  const maxFreq = Math.max(...Array.from(freq.values()));
+  if (maxFreq > 0) {
+    for (let i = 0; i < 25; i++) {
+      freq.set(i, (freq.get(i) || 0) / maxFreq);
+    }
+  }
+  
+  return freq;
+}
+
+/**
+ * Calcula o Desvio Padrão Local
+ * Quanto maior, mais irregular a distribuição recente
+ */
+function calculateLocalDeviation(frequencyMap: Map<number, number>): number {
+  const values = Array.from(frequencyMap.values());
+  const mean = values.reduce((a, b) => a + b, 0) / values.length;
+  const squaredDiffs = values.map(v => Math.pow(v - mean, 2));
+  return Math.sqrt(squaredDiffs.reduce((a, b) => a + b, 0) / values.length);
+}
+
+/**
+ * Identifica hotspots (células muito frequentes) e coldspots (raramente usadas)
+ */
+function identifyZones(frequencyMap: Map<number, number>, recentPatterns: number[][]): {
+  hotspots: number[];
+  coldspots: number[];
+} {
+  if (recentPatterns.length < 2) {
+    return { hotspots: [], coldspots: [] };
+  }
+  
+  const hotspots: number[] = [];
+  const coldspots: number[] = [];
+  const threshold = 0.6;
+  
+  frequencyMap.forEach((normalizedFreq, cell) => {
+    if (normalizedFreq >= threshold) {
+      hotspots.push(cell);
+    } else if (normalizedFreq === 0) {
+      coldspots.push(cell);
+    }
+  });
+  
+  return { hotspots, coldspots };
+}
+
+/**
+ * Calcula similaridade Jaccard entre dois padrões
+ */
+function jaccardSimilarity(a: number[], b: number[]): number {
+  if (a.length === 0 || b.length === 0) return 0;
+  const setA = new Set(a);
+  const setB = new Set(b);
+  const intersection = [...setA].filter(x => setB.has(x)).length;
+  const union = new Set([...setA, ...setB]).size;
   return intersection / union;
 }
 
 /**
- * Verifica se um padrão é muito similar aos recentes
- */
-function isPatternTooSimilar(newPattern: number[], recentPatterns: number[][], threshold: number = 0.5): boolean {
-  for (const recent of recentPatterns) {
-    if (calculatePatternSimilarity(newPattern, recent) > threshold) {
-      return true;
-    }
-  }
-  return false;
-}
-
-/**
- * Motor de oportunidades ADAPTATIVO
- * Usa o histórico para evitar células que frequentemente têm bombas
+ * Motor Principal - Monte Carlo com Fisher-Yates + Desvio Local
  */
 export async function runAdaptiveMonteCarloSimulation(
   numberOfMines: number,
-  iterations: number = 3000,
+  iterations: number = 5000,
   _baseThreshold: number = 0.97,
   recentPatterns: number[][] = [],
   trainingLevel: number = 0
 ): Promise<ProbabilityResult> {
-  const totalCells = 25;
-  const safeCount = new Array<number>(totalCells).fill(0);
+  
+  const safetyScore = new Array<number>(25).fill(0);
   let patternsAvoided = 0;
-
-  // Constrói mapa de calor do histórico
-  const heatmap = buildHeatmap(recentPatterns);
+  let validIterations = 0;
   
-  // Identifica hotspots (células com alta frequência de bombas)
-  const hotspots: number[] = [];
-  const avgFrequency = recentPatterns.length > 0 
-    ? recentPatterns.reduce((sum, p) => sum + p.length, 0) / recentPatterns.length / totalCells
-    : 0;
+  // Análise do histórico
+  const frequencyMap = buildFrequencyMap(recentPatterns);
+  const localDeviation = calculateLocalDeviation(frequencyMap);
+  const { hotspots, coldspots } = identifyZones(frequencyMap, recentPatterns);
   
-  heatmap.forEach((freq, cell) => {
-    if (freq > avgFrequency * 2 && freq >= 2) {
-      hotspots.push(cell);
-    }
-  });
-
-  // Bônus baseado no nível de treinamento (mais histórico = mais preciso)
-  const trainingBonus = Math.min(trainingLevel * 1.5, 15);
-
-  // Simulações Monte Carlo com peso do histórico
+  // Bônus de treinamento
+  const trainingBonus = Math.min(trainingLevel * 2, 20);
+  
+  // Simulações Monte Carlo com Fisher-Yates
   for (let i = 0; i < iterations; i++) {
-    const mines = new Set<number>();
-
-    // Gera posições de minas aleatórias
-    while (mines.size < numberOfMines) {
-      mines.add(Math.floor(Math.random() * totalCells));
+    const simulatedMines = fisherYatesMineGeneration(numberOfMines);
+    
+    // Verificação de similaridade com histórico recente
+    // Cassinos evitam padrões muito repetitivos
+    let tooSimilar = false;
+    if (recentPatterns.length >= 2) {
+      for (const recent of recentPatterns.slice(0, 3)) {
+        if (jaccardSimilarity(simulatedMines, recent) > 0.5) {
+          tooSimilar = true;
+          patternsAvoided++;
+          break;
+        }
+      }
     }
-
-    const mineArray = Array.from(mines);
-
-    // Se muito similar a padrões recentes, descarta (padrões tendem a não repetir)
-    if (recentPatterns.length > 0 && isPatternTooSimilar(mineArray, recentPatterns, 0.4)) {
-      patternsAvoided++;
-      continue;
-    }
-
-    // Conta células seguras nesta iteração
-    for (let cell = 0; cell < totalCells; cell++) {
-      if (!mines.has(cell)) {
-        safeCount[cell]++;
+    
+    if (tooSimilar) continue;
+    
+    validIterations++;
+    
+    // Contabiliza células seguras
+    for (let cell = 0; cell < 25; cell++) {
+      if (!simulatedMines.includes(cell)) {
+        safetyScore[cell]++;
       }
     }
   }
-
-  // Normaliza as contagens para probabilidades
-  const effectiveIterations = Math.max(iterations - patternsAvoided, 1);
-  const probabilities: { index: number; value: number }[] = [];
-  const confidenceMap = new Map<number, number>();
-
-  for (let i = 0; i < totalCells; i++) {
-    let prob = safeCount[i] / effectiveIterations;
-    
-    // AJUSTE ADAPTATIVO: Penaliza células que frequentemente têm bombas no histórico
-    const historicalFreq = heatmap.get(i) || 0;
-    if (recentPatterns.length > 0 && historicalFreq > 0) {
-      // Quanto mais vezes teve bomba, maior a penalidade
-      const penalty = (historicalFreq / recentPatterns.length) * 0.3;
-      prob = prob * (1 - penalty);
+  
+  // Fallback se muitas iterações foram descartadas
+  if (validIterations < iterations * 0.3) {
+    validIterations = iterations;
+    for (let i = 0; i < 25; i++) {
+      safetyScore[i] = Math.round((iterations * (25 - numberOfMines)) / 25);
     }
-    
-    // BÔNUS: Células que nunca tiveram bombas no histórico ganham boost
-    if (recentPatterns.length >= 3 && historicalFreq === 0) {
-      prob = Math.min(prob * 1.1, 0.99);
-    }
-    
-    probabilities.push({ index: i, value: prob });
-    confidenceMap.set(i, prob);
   }
-
-  // Ordena por maior probabilidade de segurança
-  probabilities.sort((a, b) => b.value - a.value);
-
-  // Quantidade adaptativa de sugestões baseada na dificuldade
-  const safeCellsAvailable = totalCells - numberOfMines;
+  
+  // Calcula probabilidades ajustadas
+  const probabilities: { index: number; score: number }[] = [];
+  const confidenceMap = new Map<number, number>();
+  
+  for (let i = 0; i < 25; i++) {
+    let baseProb = safetyScore[i] / validIterations;
+    
+    // AJUSTE ADAPTATIVO baseado no histórico
+    if (recentPatterns.length >= 2) {
+      const historicalFreq = frequencyMap.get(i) || 0;
+      
+      // Penaliza hotspots (células que saem muito)
+      if (hotspots.includes(i)) {
+        baseProb *= (1 - historicalFreq * 0.4);
+      }
+      
+      // BÔNUS para coldspots (células que não saem)
+      // Aproveitando o "Desvio Padrão Local"
+      if (coldspots.includes(i)) {
+        // Quanto maior o desvio local, maior o bônus
+        const deviationBonus = Math.min(localDeviation * 0.3, 0.15);
+        baseProb = Math.min(baseProb * (1 + 0.1 + deviationBonus), 0.99);
+      }
+    }
+    
+    // Bônus de treinamento
+    if (trainingLevel >= 3) {
+      baseProb = Math.min(baseProb * (1 + trainingBonus * 0.005), 0.99);
+    }
+    
+    probabilities.push({ index: i, score: baseProb });
+    confidenceMap.set(i, baseProb);
+  }
+  
+  // Ordena por maior score
+  probabilities.sort((a, b) => b.score - a.score);
+  
+  // Quantidade de sugestões baseada na dificuldade
+  const safeCellsAvailable = 25 - numberOfMines;
   let suggestionsCount: number;
   
   if (numberOfMines >= 20) {
@@ -167,50 +226,34 @@ export async function runAdaptiveMonteCarloSimulation(
   } else {
     suggestionsCount = Math.min(5, safeCellsAvailable);
   }
-
-  suggestionsCount = Math.max(1, suggestionsCount);
-
-  // Pega as células com maior probabilidade de segurança
-  // Exclui hotspots das sugestões se tiver histórico suficiente
+  
+  // Seleciona as melhores células, evitando hotspots quando possível
   let safeCells = probabilities
-    .filter(p => recentPatterns.length < 3 || !hotspots.includes(p.index))
+    .filter(p => !hotspots.includes(p.index) || recentPatterns.length < 3)
     .slice(0, suggestionsCount)
     .map(p => p.index);
-
-  // Fallback: se filtrou demais, pega as melhores sem filtro
+  
+  // Fallback
   if (safeCells.length < suggestionsCount) {
-    safeCells = probabilities
-      .slice(0, suggestionsCount)
-      .map(p => p.index);
+    safeCells = probabilities.slice(0, suggestionsCount).map(p => p.index);
   }
-
-  // Calcula entropia
-  const p = numberOfMines / totalCells;
+  
+  // Entropia
+  const p = numberOfMines / 25;
   const entropy = p === 0 || p === 1 ? 0 : -(p * Math.log2(p) + (1 - p) * Math.log2(1 - p));
-
+  
   return {
     safeCells,
     confidenceMap,
-    iterations: effectiveIterations,
+    iterations: validIterations,
     entropy,
     mode: "ADAPTIVE",
     adaptiveInfo: {
       patternsAvoided,
       trainingBonus,
-      hotspots
+      hotspots,
+      coldspots,
+      localDeviation
     }
   };
-}
-
-/**
- * Gera passos de análise para o log visual
- */
-export function generateAnalysisSteps(mines: number, trainingLevel: number): AnalysisStep[] {
-  return [
-    { type: 'info', message: `Iniciando análise com ${mines} minas...`, timestamp: new Date() },
-    { type: 'process', message: 'Executando 3000 simulações Monte Carlo...', timestamp: new Date() },
-    { type: 'process', message: 'Calculando densidade de probabilidade...', timestamp: new Date() },
-    { type: 'info', message: `Nível de treinamento: ${trainingLevel}`, timestamp: new Date() },
-    { type: 'success', message: 'Sinais de alta confiança identificados!', timestamp: new Date() }
-  ];
 }
