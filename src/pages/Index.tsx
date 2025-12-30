@@ -8,7 +8,7 @@ import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Badge } from "@/components/ui/badge";
-import { Brain, Target, RefreshCw, Bomb, Star, Zap, TrendingUp } from "lucide-react";
+import { Brain, Target, RefreshCw, Bomb, Star, Zap, TrendingUp, Flame } from "lucide-react";
 
 const Index = () => {
   const { toast } = useToast();
@@ -82,6 +82,7 @@ const Index = () => {
     const cells = [];
     for (let i = 0; i < 25; i++) {
       const isSuggested = results.safeCells.includes(i);
+      const isHotspot = results.adaptiveInfo.hotspots.includes(i);
       const confidence = results.confidenceMap.get(i) || 0;
       
       cells.push(
@@ -91,10 +92,12 @@ const Index = () => {
           animate={{ opacity: 1, scale: 1 }}
           transition={{ delay: i * 0.02 }}
           className={`
-            aspect-square rounded-lg flex flex-col items-center justify-center text-xs font-bold
+            aspect-square rounded-lg flex flex-col items-center justify-center text-xs font-bold relative
             ${isSuggested 
               ? 'bg-gradient-to-br from-emerald-500 to-green-600 text-white ring-2 ring-emerald-300 shadow-[0_0_15px_rgba(16,185,129,0.5)]' 
-              : 'bg-zinc-800/80 text-zinc-500'
+              : isHotspot
+                ? 'bg-gradient-to-br from-red-900/60 to-red-800/60 text-red-300 ring-1 ring-red-500/50'
+                : 'bg-zinc-800/80 text-zinc-500'
             }
           `}
         >
@@ -102,6 +105,11 @@ const Index = () => {
             <>
               <Star className="w-4 h-4 fill-yellow-300 text-yellow-300" />
               <span className="text-[9px] mt-0.5">{(confidence * 100).toFixed(0)}%</span>
+            </>
+          ) : isHotspot ? (
+            <>
+              <Bomb className="w-3 h-3 text-red-400" />
+              <span className="text-[8px] text-red-400">perigoso</span>
             </>
           ) : (
             <span className="text-zinc-600 text-[10px]">{i + 1}</span>
@@ -228,6 +236,13 @@ const Index = () => {
                 {results.adaptiveInfo.patternsAvoided > 0 && (
                   <div className="text-center text-[10px] text-zinc-500">
                     IA evitou {results.adaptiveInfo.patternsAvoided} padrões repetitivos
+                  </div>
+                )}
+
+                {results.adaptiveInfo.hotspots.length > 0 && (
+                  <div className="flex items-center justify-center gap-2 text-[10px] text-red-400 bg-red-500/10 rounded-lg py-2">
+                    <Flame className="w-3 h-3" />
+                    {results.adaptiveInfo.hotspots.length} células marcadas como perigosas pelo histórico
                   </div>
                 )}
               </motion.div>
